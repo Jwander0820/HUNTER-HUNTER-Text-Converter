@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 import os
-from PIL import Image
+from PIL import Image, ImageOps
 
 
 def crop_text(img_path, limit_length=None, dilate_iter=10):
@@ -84,3 +84,43 @@ def crop_text(img_path, limit_length=None, dilate_iter=10):
         # 儲存圖片
         filename = os.path.join('img', f'{i}.png')
         cv2.imwrite(filename, transparent_image)
+
+
+def process_image(input_image_path, output_image_path):
+    """將透明底圖圖片重新縮小至一半，並重新貼到指定位置，用於生成促音的縮小字符"""
+    # 輸入圖片
+    input_image = Image.open(input_image_path).convert('RGBA')
+
+    # 縮放圖片至80x80
+    resized_image = input_image.resize((80, 80), Image.LANCZOS)
+
+    # 閾值
+    threshold = 128
+
+    # 將圖像分解為 R, G, B 和 A 通道
+    r, g, b, a = resized_image.split()
+
+    # 對 R, G, B 通道進行二值化處理
+    r = r.point(lambda x: 255 if x > threshold else 0)
+    g = g.point(lambda x: 255 if x > threshold else 0)
+    b = b.point(lambda x: 255 if x > threshold else 0)
+
+    # 對 A 通道進行二值化處理，將灰色邊界轉化為黑色
+    a = a.point(lambda x: 255 if x > threshold else 0)
+
+    # 重新組合 R, G, B 和 A 通道
+    binary_image = Image.merge('RGBA', (r, g, b, a))
+
+    # 創建透明底圖（160x160）
+    base_image = Image.new('RGBA', (160, 160), (255, 255, 255, 0))
+    # 將縮放後的圖像貼到指定位置（40, 60）
+    base_image.paste(binary_image, (40, 60), binary_image)
+
+    # 儲存輸出圖像
+    base_image.save(output_image_path)
+
+
+if __name__ == "__main__":
+    input_path = r"8_small_yu.png"
+    output_path = "8_small_yu.png"
+    process_image(input_path, output_path)
