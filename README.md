@@ -1,4 +1,42 @@
-# Hunter x Hunter Text Converter
+# HUNTER×HUNTER Text Converter
+
+## 功能
+
+- 支援平假名、片假名與常見羅馬拼音音節。
+- 支援橫排與直排預覽。
+- 支援調整字距裁切。
+- 支援透明背景 PNG 下載。
+- 無法解析的輸入會在畫面上提示。
+
+## 可用輸入範例
+
+```text
+ha n - ta ha n - ta
+テキストコンバータ
+かわいいね-
+pa pi pu pe po
+```
+
+羅馬拼音建議用空格分隔音節，例如 `ha n ta`。日文假名可以直接連續輸入。
+
+## 本機開發
+
+```bash
+npm install
+npm run dev
+```
+
+建置靜態網站：
+
+```bash
+npm run build
+```
+
+建置結果會輸出到 `dist/`。
+
+
+
+## 舊版 Python 說明
 ### 獵人文字轉換器
 ### ハンター×ハンター テキストコンバーター
 

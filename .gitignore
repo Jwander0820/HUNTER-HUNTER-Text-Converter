@@ -204,3 +204,11 @@ venv/*
 *.zip
 
 ## except to ignore
+
+!.github/
+!.github/**
+!pnpm-lock.yaml
+!pnpm-workspace.yaml
+node_modules/
+_tmp_*
+pnpm-workspace.yaml.*
