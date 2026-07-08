@@ -196,6 +196,8 @@ venv/*
 *.pdf
 *.ttf
 *.json
+!package.json
+!tsconfig.json
 *.ui
 *.ico
 *.job
