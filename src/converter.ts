@@ -19,7 +19,7 @@ export function parseInput(value: string): ParsedInput {
   const layers: GlyphLayer[] = [];
   const labels: string[] = [];
   const invalid: string[] = [];
-  const chunks = value.trim().split(/\s+/).filter(Boolean);
+  const chunks = value.normalize("NFKC").trim().split(/\s+/).filter(Boolean);
 
   if (chunks.length === 0) {
     return { layers, labels, invalid };
@@ -65,10 +65,14 @@ export async function renderGlyphs(
   const height = direction === "horizontal" ? glyphSize : axisLength;
   const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
 
+  if (axisLength * dpr > 16384) {
+    throw new Error("文字過長，請縮短輸入或增加字距重疊後再試。");
+  }
+
   target.width = width * dpr;
   target.height = height * dpr;
   target.style.width = `${width}px`;
-  target.style.height = `${height}px`;
+  target.style.height = "auto";
 
   const context = target.getContext("2d");
   if (!context) {
@@ -103,8 +107,10 @@ function parseRomajiChunk(
   while (cursor < chunk.length) {
     const matched = romajiTokens.find((token) => chunk.startsWith(token, cursor));
     if (!matched) {
-      invalid.push(chunk.slice(cursor));
-      break;
+      const char = Array.from(chunk.slice(cursor))[0];
+      if (!isIgnoredPunctuation(char)) invalid.push(char);
+      cursor += char.length;
+      continue;
     }
 
     layers.push(glyphMap[matched]);

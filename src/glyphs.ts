@@ -131,7 +131,7 @@ export const romajiTokens = Object.keys(glyphMap)
   .sort((a, b) => b.length - a.length || a.localeCompare(b));
 
 function buildGlyphMap(): Record<string, GlyphLayer> {
-  const map: Record<string, GlyphLayer> = {};
+  const map: Record<string, GlyphLayer> = Object.create(null);
 
   for (const row of rows) {
     addRow(map, row);

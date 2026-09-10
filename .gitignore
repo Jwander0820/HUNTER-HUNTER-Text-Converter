@@ -214,3 +214,5 @@ venv/*
 node_modules/
 _tmp_*
 pnpm-workspace.yaml.*
+# Local npm cache
+.npm-cache/
