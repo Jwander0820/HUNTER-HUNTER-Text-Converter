@@ -216,3 +216,4 @@ _tmp_*
 pnpm-workspace.yaml.*
 # Local npm cache
 .npm-cache/
+output/

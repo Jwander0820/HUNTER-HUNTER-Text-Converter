@@ -1,10 +1,13 @@
 import cv2
 import numpy as np
-import os
-from PIL import Image, ImageOps
+from pathlib import Path
+from PIL import Image
 
 
-def crop_text(img_path, limit_length=None, dilate_iter=10):
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def crop_text(img_path, limit_length=None, dilate_iter=10, *, output_dir=None):
     """
     裁切圖片(白底)，並生成去背透明圖層，會根據框選出的輪廓做裁切
     使用 limit_length 可以強制指定底圖尺寸大小，若不指定，則會生成裁切的輪廓尺寸*1.2的底圖
@@ -12,13 +15,15 @@ def crop_text(img_path, limit_length=None, dilate_iter=10):
     :param img_path: 圖片路徑
     :param limit_length: 指定底圖大小
     :param dilate_iter: 膨脹係數
+    :param output_dir: 輸出目錄，預設為專案根目錄下的 img
     :return:
     """
+    if limit_length is not None and (not isinstance(limit_length, int) or limit_length <= 0):
+        raise ValueError("limit_length must be a positive integer.")
+
     # 載入圖片
-    # image = cv2.imread(img_path)
-    image = Image.open(img_path)
-    image = image.convert("RGB")
-    image = np.uint8(image)
+    with Image.open(img_path) as source:
+        image = np.array(source.convert("RGB"), dtype=np.uint8)
     image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
 
     # 轉換成灰階圖片
@@ -34,14 +39,15 @@ def crop_text(img_path, limit_length=None, dilate_iter=10):
     # 尋找輪廓
     contours, hierarchy = cv2.findContours(dilated_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    # 創建img資料夾
-    if not os.path.exists('img'):
-        os.mkdir('img')
+    rectangles = [cv2.boundingRect(contour) for contour in contours]
+    if limit_length is not None and any(max(w, h) > limit_length for _, _, w, h in rectangles):
+        raise ValueError("limit_length is smaller than a glyph; increase it to avoid clipping.")
+
+    output_dir = Path(output_dir) if output_dir is not None else ROOT / 'img'
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     # 遍歷每個輪廓
-    for i, contour in enumerate(contours):
-        # 計算輪廓的外接矩形
-        x, y, w, h = cv2.boundingRect(contour)
+    for i, (x, y, w, h) in enumerate(rectangles):
 
         # 擷取圖片
         extracted_image = image[y:y+h, x:x+w]
@@ -55,10 +61,10 @@ def crop_text(img_path, limit_length=None, dilate_iter=10):
         extracted_image_rgba = cv2.merge(rgba, 4)
 
         # 建立透明底圖
-        if limit_length:
+        if limit_length is not None:
             transparent_image = np.zeros((limit_length, limit_length, 4), dtype=np.uint8)
         else:
-            transparent_image = np.zeros((int(w*1.2), int(h*1.2), 4), dtype=np.uint8)
+            transparent_image = np.zeros((int(h*1.2), int(w*1.2), 4), dtype=np.uint8)
 
         # 計算圖片置中位置
         center_x = int(transparent_image.shape[1] / 2)
@@ -70,20 +76,13 @@ def crop_text(img_path, limit_length=None, dilate_iter=10):
         x2 = x1 + w
         y2 = y1 + h
 
-        # 將圖片置中放置在透明底圖上
-        x1 = max(0, x1)
-        y1 = max(0, y1)
-        x2 = min(transparent_image.shape[1], x2)
-        y2 = min(transparent_image.shape[0], y2)
-
-        # 擷取圖片的部分可能超出範圍
-        extracted_image_rgba = extracted_image_rgba[:y2-y1, :x2-x1]
-
+        # 將完整圖片置中放置在透明底圖上
         transparent_image[y1:y2, x1:x2] = extracted_image_rgba
 
         # 儲存圖片
-        filename = os.path.join('img', f'{i}.png')
-        cv2.imwrite(filename, transparent_image)
+        filename = output_dir / f'{i}.png'
+        if not cv2.imwrite(str(filename), transparent_image):
+            raise OSError(f"Failed to save the image: {filename}")
 
 
 def process_image(input_image_path, output_image_path):

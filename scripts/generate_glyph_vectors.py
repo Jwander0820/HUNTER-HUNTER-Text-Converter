@@ -1,12 +1,19 @@
 from collections import defaultdict
+import json
 from math import hypot
 from pathlib import Path
+import sys
 
 import numpy as np
 from PIL import Image
 
 
 ROOT = Path(__file__).resolve().parents[1]
+if __package__ in (None, ""):
+    sys.path.insert(0, str(ROOT))
+
+from core.text_dict import filename_dict
+
 SOURCE_DIR = ROOT / "text_img"
 OUTPUT_FILE = ROOT / "src" / "glyphVectors.ts"
 
@@ -275,20 +282,36 @@ def format_number(value: float) -> str:
     return f"{rounded:.2f}".rstrip("0").rstrip(".")
 
 
-def main() -> None:
+def main(source_dir: Path = SOURCE_DIR, output_file: Path = OUTPUT_FILE) -> None:
+    image_paths = sorted(
+        path for path in source_dir.glob("*.png")
+        if path.is_file() and not path.stem.endswith("_org")
+    )
+    if not image_paths:
+        raise ValueError(f"No PNG source files found in {source_dir}; existing output was not changed.")
+
+    required_files = {
+        filename
+        for filenames in filename_dict.values()
+        for filename in (filenames if isinstance(filenames, tuple) else (filenames,))
+    }
+    missing_files = required_files - {path.name for path in image_paths}
+    if missing_files:
+        raise ValueError(f"Missing glyph source files: {', '.join(sorted(missing_files))}")
+
     entries: list[str] = []
 
-    for image_path in sorted(SOURCE_DIR.glob("*.png")):
-        if image_path.stem.endswith("_org"):
-            continue
-
-        image = Image.open(image_path).convert("RGBA")
-        alpha = np.array(image)[:, :, 3]
+    for image_path in image_paths:
+        with Image.open(image_path) as image:
+            alpha = np.array(image.convert("RGBA"))[:, :, 3]
+            width, height = image.size
         path = mask_to_path(alpha > 0)
-        width, height = image.size
+        if not path:
+            raise ValueError(f"Glyph source has no visible shape: {image_path.name}")
 
         entries.append(
-            f'  "{image_path.name}": {{ width: {width}, height: {height}, path: "{path}" }},'
+            f"  {json.dumps(image_path.name)}: "
+            f"{json.dumps({'width': width, 'height': height, 'path': path})},"
         )
 
     output = "\n".join(
@@ -306,7 +329,7 @@ def main() -> None:
         ]
     )
 
-    OUTPUT_FILE.write_text(output, encoding="utf-8")
+    output_file.write_text(output, encoding="utf-8")
 
 
 if __name__ == "__main__":

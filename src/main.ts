@@ -1,4 +1,5 @@
-import { downloadCanvas, parseInput, renderGlyphs, Direction } from "./converter";
+import { downloadCanvas, parseInput, renderGlyphs } from "./converter.ts";
+import type { Direction, ParsedInput } from "./converter.ts";
 import "./styles.css";
 
 type AppState = {
@@ -14,6 +15,8 @@ const state: AppState = {
   crop: 25,
   input: "ha n - ta ha n - ta",
 };
+let lastParsedText: string | undefined;
+let parsed: ParsedInput = { layers: [], labels: [], invalid: [] };
 
 const app = document.querySelector<HTMLDivElement>("#app");
 
@@ -154,15 +157,16 @@ downloadButton.addEventListener("click", () => {
   try {
     downloadCanvas(canvas);
     statusText.textContent = "已準備 PNG 下載";
-  } catch {
-    statusText.textContent = "下載失敗，請重新產生預覽後再試。";
+  } catch (error) {
+    statusText.textContent = error instanceof Error ? error.message : "PNG 下載失敗，請重試。";
     statusText.dataset.tone = "warning";
+    downloadButton.disabled = true;
   }
 });
 
 void updatePreview();
 
-async function updatePreview(): Promise<void> {
+function updatePreview(): void {
   paper.classList.toggle("is-vertical", state.direction === "vertical");
   cropValue.value = String(state.crop);
   directionButtons.forEach((button) => {
@@ -171,51 +175,54 @@ async function updatePreview(): Promise<void> {
     button.setAttribute("aria-pressed", String(isActive));
   });
 
-  const parsed = parseInput(state.input);
-  const hasGlyphs = parsed.layers.length > 0;
   emptyState.textContent = "輸入可轉換的假名或羅馬拼音";
   clearButton.disabled = state.input.length === 0;
-  statusText.dataset.tone = parsed.invalid.length ? "warning" : "success";
   exampleButtons.forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.example === state.input)));
 
-  tokenList.innerHTML = parsed.labels
-    .map((label) => `<span class="token">${escapeHtml(label)}</span>`)
-    .join("");
-
-  emptyState.hidden = hasGlyphs;
-  canvas.hidden = !hasGlyphs;
-  downloadButton.disabled = !hasGlyphs;
-
-  if (!hasGlyphs) {
-    statusText.textContent = parsed.invalid.length ? `未支援：${parsed.invalid.join("、")}。請輸入假名或羅馬拼音。` : "輸入文字，開始轉換";
-    imageSize.textContent = "尚無圖片";
-    clearCanvas();
-    return;
-  }
-
-  if (parsed.invalid.length > 0) {
-    statusText.textContent = `已轉換 ${parsed.labels.length} 個字圖；略過未支援字元：${parsed.invalid.join("、")}`;
-  } else {
-    statusText.textContent = `${parsed.labels.length} 個字圖已就緒`;
-  }
-
+  downloadButton.disabled = true;
   try {
-    await renderGlyphs(parsed.layers, state.direction, state.crop, canvas);
+    // Changing spacing or direction can reuse parsing and its token DOM.
+    if (lastParsedText !== state.input) {
+      parsed = parseInput(state.input);
+      lastParsedText = state.input;
+      tokenList.innerHTML = parsed.labels
+        .map((label) => `<span class="token">${escapeHtml(label)}</span>`)
+        .join("");
+    }
+    const hasGlyphs = parsed.layers.length > 0;
+    statusText.dataset.tone = parsed.invalid.length ? "warning" : "success";
+    emptyState.hidden = hasGlyphs;
+    canvas.hidden = !hasGlyphs;
+
+    if (!hasGlyphs) {
+      statusText.textContent = parsed.invalid.length ? `未支援：${parsed.invalid.join("、")}。請輸入假名或羅馬拼音。` : "輸入文字，開始轉換";
+      imageSize.textContent = "尚無圖片";
+      clearCanvas();
+      return;
+    }
+    statusText.textContent = parsed.invalid.length
+      ? `已轉換 ${parsed.labels.length} 個字圖；略過未支援字元：${parsed.invalid.join("、")}`
+      : `${parsed.labels.length} 個字圖已就緒`;
+    renderGlyphs(parsed.layers, state.direction, state.crop, canvas);
     imageSize.textContent = `${canvas.width} × ${canvas.height} px`;
+    downloadButton.disabled = false;
   } catch (error) {
     statusText.textContent = error instanceof Error ? error.message : "預覽產生失敗";
-    downloadButton.disabled = true;
+    lastParsedText = undefined;
+    tokenList.replaceChildren();
     statusText.dataset.tone = "warning";
     canvas.hidden = true;
     emptyState.hidden = false;
     emptyState.textContent = statusText.textContent;
     imageSize.textContent = "無法產生圖片";
+    clearCanvas();
   }
 }
 
 function clearCanvas(): void {
-  const context = canvas.getContext("2d");
-  context?.clearRect(0, 0, canvas.width, canvas.height);
+  // Release the old bitmap and prevent stale output after invalid/oversized input.
+  canvas.width = 1;
+  canvas.height = 1;
 }
 
 function requireElement<T extends Element>(selector: string): T {

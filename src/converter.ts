@@ -1,5 +1,7 @@
-import { glyphMap, GlyphLayer, romajiTokens } from "./glyphs";
-import { glyphVectors, GlyphVector } from "./glyphVectors";
+import { glyphMap, romajiTokens } from "./glyphs.ts";
+import type { GlyphLayer } from "./glyphs.ts";
+import { glyphVectors } from "./glyphVectors.ts";
+import type { GlyphVector } from "./glyphVectors.ts";
 
 export type Direction = "horizontal" | "vertical";
 
@@ -14,12 +16,20 @@ const markSize = 30;
 const markHorizontal = { x: 130, y: 91 };
 const markVertical = { x: 0, y: 91 };
 const pathCache = new Map<string, Path2D>();
+export const MAX_INPUT_LENGTH = 2000;
+export const MAX_GLYPHS = 100;
+// A conservative per-axis limit also accommodates iOS canvas limits.
+export const MAX_CANVAS_SIDE = 4096;
 
 export function parseInput(value: string): ParsedInput {
+  if (value.length > MAX_INPUT_LENGTH) {
+    throw new Error(`輸入過長，請縮短至 ${MAX_INPUT_LENGTH} 個字元以內。`);
+  }
+
   const layers: GlyphLayer[] = [];
   const labels: string[] = [];
   const invalid: string[] = [];
-  const chunks = value.normalize("NFKC").trim().split(/\s+/).filter(Boolean);
+  const chunks = value.normalize("NFKC").toLowerCase().split(/[\s、。，,!?！？]+/u).filter(Boolean);
 
   if (chunks.length === 0) {
     return { layers, labels, invalid };
@@ -32,45 +42,59 @@ export function parseInput(value: string): ParsedInput {
       continue;
     }
 
-    if (containsKana(chunk)) {
-      for (const char of Array.from(chunk)) {
-        const layer = glyphMap[char];
+    // Parse roman runs independently so kaあ and ka あ have the same meaning.
+    for (const part of chunk.match(/[a-z]+|[^a-z]/gu) ?? []) {
+      if (/^[a-z]+$/.test(part)) {
+        parseRomajiChunk(part, layers, labels, invalid);
+      } else {
+        const layer = glyphMap[part];
         if (layer) {
           layers.push(layer);
-          labels.push(char);
-        } else if (!isIgnoredPunctuation(char)) {
-          invalid.push(char);
+          labels.push(part);
+        } else {
+          invalid.push(part);
         }
       }
-      continue;
     }
+  }
 
-    parseRomajiChunk(chunk.toLowerCase(), layers, labels, invalid);
+  if (layers.length > MAX_GLYPHS) {
+    throw new Error(`文字過長，一次最多轉換 ${MAX_GLYPHS} 個字圖。`);
   }
 
   return { layers, labels, invalid: Array.from(new Set(invalid)) };
 }
 
-export async function renderGlyphs(
+export function getCanvasLayout(length: number, direction: Direction, crop: number, deviceScale = 1) {
+  if (!Number.isInteger(length) || length < 0 || length > MAX_GLYPHS) {
+    throw new Error(`文字過長，一次最多轉換 ${MAX_GLYPHS} 個字圖。`);
+  }
+  if (!Number.isFinite(crop) || !Number.isFinite(deviceScale)) {
+    throw new Error("無法使用目前的圖片尺寸設定。");
+  }
+  const spacingOverlap = Math.max(0, Math.min(48, crop));
+  const step = glyphSize - spacingOverlap * 2;
+  const axisLength = length > 0 ? glyphSize + step * (length - 1) : glyphSize;
+  if (axisLength > MAX_CANVAS_SIDE) {
+    throw new Error("圖片過長，請縮短文字或增加字距重疊。");
+  }
+  const width = direction === "horizontal" ? axisLength : glyphSize;
+  const height = direction === "horizontal" ? glyphSize : axisLength;
+  // Keep at least the normal resolution; only reduce extra high-DPI scaling.
+  const scale = Math.min(Math.max(1, Math.min(2, deviceScale)), MAX_CANVAS_SIDE / axisLength);
+  return { width, height, step, scale };
+}
+
+export function renderGlyphs(
   layers: GlyphLayer[],
   direction: Direction,
   crop: number,
   target: HTMLCanvasElement,
-): Promise<void> {
-  const spacingOverlap = Math.max(0, Math.min(48, crop));
-  const step = Math.max(24, glyphSize - spacingOverlap * 2);
-  const length = layers.length;
-  const axisLength = length > 0 ? glyphSize + step * (length - 1) : glyphSize;
-  const width = direction === "horizontal" ? axisLength : glyphSize;
-  const height = direction === "horizontal" ? glyphSize : axisLength;
-  const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+): void {
+  const { width, height, step, scale } = getCanvasLayout(layers.length, direction, crop, window.devicePixelRatio || 1);
 
-  if (axisLength * dpr > 16384) {
-    throw new Error("文字過長，請縮短輸入或增加字距重疊後再試。");
-  }
-
-  target.width = width * dpr;
-  target.height = height * dpr;
+  target.width = Math.floor(width * scale);
+  target.height = Math.floor(height * scale);
   target.style.width = `${width}px`;
   target.style.height = "auto";
 
@@ -79,7 +103,7 @@ export async function renderGlyphs(
     throw new Error("Canvas is not available in this browser.");
   }
 
-  context.setTransform(dpr, 0, 0, dpr, 0, 0);
+  context.setTransform(target.width / width, 0, 0, target.height / height, 0, 0);
   context.clearRect(0, 0, width, height);
 
   for (const [index, layer] of layers.entries()) {
@@ -90,9 +114,13 @@ export async function renderGlyphs(
 }
 
 export function downloadCanvas(canvas: HTMLCanvasElement, filename = "hunter-text.png"): void {
+  const url = canvas.toDataURL("image/png");
+  if (!url.startsWith("data:image/png;base64,")) {
+    throw new Error("PNG 產生失敗，請縮短文字後重試。");
+  }
   const link = document.createElement("a");
   link.download = filename;
-  link.href = canvas.toDataURL("image/png");
+  link.href = url;
   link.click();
 }
 
@@ -107,9 +135,8 @@ function parseRomajiChunk(
   while (cursor < chunk.length) {
     const matched = romajiTokens.find((token) => chunk.startsWith(token, cursor));
     if (!matched) {
-      const char = Array.from(chunk.slice(cursor))[0];
-      if (!isIgnoredPunctuation(char)) invalid.push(char);
-      cursor += char.length;
+      invalid.push(chunk[cursor]);
+      cursor += 1;
       continue;
     }
 
@@ -166,12 +193,4 @@ function getPath(filename: string, vector: GlyphVector): Path2D {
   const path = new Path2D(vector.path);
   pathCache.set(filename, path);
   return path;
-}
-
-function containsKana(value: string): boolean {
-  return /[\u3040-\u30ff]/u.test(value);
-}
-
-function isIgnoredPunctuation(value: string): boolean {
-  return /[、。，,!?！？]/u.test(value);
 }
